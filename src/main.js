@@ -1,12 +1,16 @@
 import './style.css';
 import { CELL, candidate, rotateCells } from './shapes.js';
 import { Matter, createBlock, createWorld, structureBounds } from './physics.js';
+import { cameraFor, clampAim } from './view.js';
 const { Engine, Composite } = Matter;
 const $ = id=>document.getElementById(id);
 const canvas=$('game'), ctx=canvas.getContext('2d');
 let world, pieces=[], selected=0, aim=0, dropped=0, lost=0, paused=false, cooldown=0;
 let camera={x:0,y:-180,scale:1}, view={w:900,h:500}, pointer=null;
 let accumulator=0, last=performance.now(), preview;
+const heldKeys = new Set();
+let heldButton = 0;
+const PLAY_SPEED = 0.55;
 function refreshPreview(){ preview=createBlock(pieces[selected],0,0); }
 function renderChoices(){
   $('choices').replaceChildren(...pieces.map((p,i)=>{
@@ -21,7 +25,7 @@ function reset(){
   if(world){Composite.clear(world.engine.world,false);Engine.clear(world.engine);}
   world=createWorld(); world.engine.gravity.y=Number($('gravity').value);
   pieces=Array.from({length:Number($('choice-count').value)},()=>candidate()); selected=0;
-  aim=0; dropped=0;lost=0;paused=false;cooldown=0;accumulator=0;pointer=null;
+  aim=0; dropped=0;lost=0;paused=false;cooldown=0;accumulator=0;pointer=null;heldKeys.clear();heldButton=0;
   camera={x:0,y:-180,scale:1}; $('pause').textContent='一時停止';
   $('status').textContent='形を選んで、落とす場所を決めよう'; refreshPreview();renderChoices();
 }
@@ -39,6 +43,10 @@ function drop(){
 function rotate(){if(!$('rotation').checked||paused)return;pieces[selected].cells=rotateCells(pieces[selected].cells);refreshPreview();renderChoices();}
 $('drop').onclick=drop;$('reset').onclick=reset;$('rotate').onclick=rotate;
 $('left').onclick=()=>{aim-=CELL/4;pointer=null;};$('right').onclick=()=>{aim+=CELL/4;pointer=null;};
+for(const [id,direction] of [['left',-1],['right',1]]){
+  $(id).addEventListener('pointerdown',e=>{heldButton=direction;pointer=null;$(id).setPointerCapture(e.pointerId);});
+  for(const event of ['pointerup','pointercancel','lostpointercapture'])$(id).addEventListener(event,()=>heldButton=0);
+}
 $('rotation').onchange=()=>{$('rotate').disabled=!$('rotation').checked;};
 $('choice-count').onchange=()=>{pieces=pieces.slice(0,Number($('choice-count').value));while(pieces.length<Number($('choice-count').value))pieces.push(candidate());selected=0;refreshPreview();renderChoices();};
 $('pause').onclick=()=>{paused=!paused;accumulator=0;$('pause').textContent=paused?'再開':'一時停止';$('status').textContent=paused?'一時停止中':'形を選んで、落とす場所を決めよう';};
@@ -54,10 +62,12 @@ canvas.addEventListener('pointerup',e=>{if(e.pointerType!=='mouse')pointer=null;
 window.addEventListener('keydown',e=>{
   if(['INPUT','SELECT','SUMMARY'].includes(e.target.tagName)||e.target.closest('details'))return;
   if(['ArrowLeft','ArrowRight','Space','Digit1','Digit2','Digit3','KeyR'].includes(e.code))e.preventDefault();
-  if(e.code==='ArrowLeft'){aim-=CELL/8;pointer=null;}if(e.code==='ArrowRight'){aim+=CELL/8;pointer=null;}
+  if(e.code==='ArrowLeft'||e.code==='ArrowRight'){heldKeys.add(e.code);pointer=null;}
   if(e.code==='Space'&&!e.repeat)drop();if(e.code==='KeyR'&&!e.repeat)rotate();
   const n=Number(e.key)-1;if(n>=0&&n<pieces.length){selected=n;refreshPreview();renderChoices();}
 });
+window.addEventListener('keyup',e=>heldKeys.delete(e.code));
+window.addEventListener('blur',()=>{heldKeys.clear();heldButton=0;pointer=null;});
 new ResizeObserver(()=>{const r=canvas.getBoundingClientRect();view={w:r.width,h:r.height};const dpr=window.devicePixelRatio||1;canvas.width=r.width*dpr;canvas.height=r.height*dpr;}).observe(canvas);
 function drawBody(body,offsetX=0,offsetY=0,alpha=1){
   ctx.globalAlpha=alpha;
@@ -69,20 +79,23 @@ function drawBody(body,offsetX=0,offsetY=0,alpha=1){
 function frame(now){
   const dt=Math.min((now-last)/1000,0.05);last=now;
   if(!paused){
-    accumulator+=dt;cooldown=Math.max(0,cooldown-dt);
+    accumulator+=dt*PLAY_SPEED;cooldown=Math.max(0,cooldown-dt);
     while(accumulator>=1/120){Engine.update(world.engine,1000/120);accumulator-=1/120;}
     for(const b of Composite.allBodies(world.engine.world))if(!b.isStatic&&b.bounds.min.y>1000){Composite.remove(world.engine.world,b);lost++;}
-    if(pointer!==null){const edge=35;if(pointer<edge)aim-=dt*240/camera.scale;else if(pointer>view.w-edge)aim+=dt*240/camera.scale;}
+    const direction=heldButton+Number(heldKeys.has('ArrowRight'))-Number(heldKeys.has('ArrowLeft'));
+    aim+=direction*dt*220/camera.scale;
   }
   const bodies=Composite.allBodies(world.engine.world), bounds=structureBounds(bodies), sy=spawnY();
-  const minX=Math.min(bounds.minX,aim+preview.bounds.min.x)-80,maxX=Math.max(bounds.maxX,aim+preview.bounds.max.x)+80;
-  const top=sy+preview.bounds.min.y-65, bottom=100;
-  const scale=Math.min(1.25,view.w/(maxX-minX),view.h/(bottom-top));
+  const top=sy+preview.bounds.min.y-35;
+  const target=cameraFor(view,bounds,top);
   const t=1-Math.exp(-dt*5);
   // Expand immediately so the next launch preview never clips above the screen.
   // Ease back in only after the falling body has settled or left the structure.
-  if(scale<camera.scale){camera.scale=scale;camera.x=(minX+maxX)/2;camera.y=(top+bottom)/2;}
-  else{camera.scale+=(scale-camera.scale)*t;camera.x+=((minX+maxX)/2-camera.x)*t;camera.y+=((top+bottom)/2-camera.y)*t;}
+  camera.scale=target.scale<camera.scale?target.scale:camera.scale+(target.scale-camera.scale)*t;
+  camera.x=0;
+  camera.y=(view.h/2-(view.h-70))/camera.scale;
+  if(pointer!==null)aim=(pointer-view.w/2)/camera.scale;
+  aim=clampAim(aim,view.w,camera.scale,preview);
   const dpr=window.devicePixelRatio||1;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,view.w,view.h);
   ctx.translate(view.w/2,view.h/2);ctx.scale(camera.scale,camera.scale);ctx.translate(-camera.x,-camera.y);
   const left=camera.x-view.w/(2*camera.scale), right=camera.x+view.w/(2*camera.scale);
