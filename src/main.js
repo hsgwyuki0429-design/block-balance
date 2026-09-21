@@ -1,111 +1,60 @@
 import './style.css';
-import { CELL, candidate, rotateCells } from './shapes.js';
-import { Matter, createBlock, createWorld, structureBounds } from './physics.js';
-import { cameraFor, clampAim } from './view.js';
-const { Engine, Composite } = Matter;
-const $ = id=>document.getElementById(id);
-const canvas=$('game'), ctx=canvas.getContext('2d');
-let world, pieces=[], selected=0, aim=0, dropped=0, lost=0, paused=false, cooldown=0;
-let camera={x:0,y:-180,scale:1}, view={w:900,h:500}, pointer=null;
-let accumulator=0, last=performance.now(), preview;
-const heldKeys = new Set();
-let heldButton = 0;
-const PLAY_SPEED = 0.55;
-function refreshPreview(){ preview=createBlock(pieces[selected],0,0); }
-function renderChoices(){
+import { candidate, rotateCells } from './shapes.js';
+import { newGame, launch, step, cellsOf, FALL_INTERVAL, LOSS_ROW } from './grid.js';
+const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
+let game,pieces,selected=0,aim=0,paused=false,elapsed=0,last=performance.now();
+let view={w:900,h:500},unit=32,anchor=430,held=0,holdTime=0;
+function choices(){
   $('choices').replaceChildren(...pieces.map((p,i)=>{
-    const button=document.createElement('button'); button.className='choice'; button.setAttribute('aria-pressed',String(i===selected));
-    button.setAttribute('aria-label',`${i+1}: ${p.name}`);
-    const w=Math.max(...p.cells.map(c=>c[0]))+1, h=Math.max(...p.cells.map(c=>c[1]))+1;
-    button.innerHTML=`<svg viewBox="-1 -1 ${w*12+2} ${h*12+2}" aria-hidden="true">${p.cells.map(([x,y])=>`<rect x="${x*12}" y="${y*12}" width="11" height="11" rx="1" fill="${p.color}"/>`).join('')}</svg><span>${p.name}<small>${i+1} / ${p.cells.length}マス</small></span>`;
-    button.onclick=()=>{ selected=i; refreshPreview(); renderChoices(); }; return button;
+    const b=document.createElement('button');b.className='choice';b.disabled=game.busy||game.over;
+    b.setAttribute('aria-pressed',String(i===selected));b.setAttribute('aria-label',`${i+1}: ${p.name}`);
+    const w=Math.max(...p.cells.map(c=>c[0]))+1,h=Math.max(...p.cells.map(c=>c[1]))+1;
+    b.innerHTML=`<svg viewBox="-1 -1 ${w*12+2} ${h*12+2}" aria-hidden="true">${p.cells.map(([x,y])=>`<rect x="${x*12}" y="${y*12}" width="11" height="11" fill="${p.color}"/>`).join('')}</svg><span>${p.name}<small>${i+1} / ${p.cells.length}マス</small></span>`;
+    b.onclick=()=>{selected=i;choices();};return b;
   }));
 }
-function reset(){
-  if(world){Composite.clear(world.engine.world,false);Engine.clear(world.engine);}
-  world=createWorld(); world.engine.gravity.y=Number($('gravity').value);
-  pieces=Array.from({length:Number($('choice-count').value)},()=>candidate()); selected=0;
-  aim=0; dropped=0;lost=0;paused=false;cooldown=0;accumulator=0;pointer=null;heldKeys.clear();heldButton=0;
-  camera={x:0,y:-180,scale:1}; $('pause').textContent='一時停止';
-  $('status').textContent='形を選んで、落とす場所を決めよう'; refreshPreview();renderChoices();
+function reset(){game=newGame();pieces=Array.from({length:3},()=>candidate());selected=0;aim=0;paused=false;held=0;elapsed=0;$('pause').textContent='一時停止';choices();}
+function drop(){if(paused)return;if(launch(game,pieces[selected],aim)){pieces[selected]=candidate();elapsed=0;choices();}}
+function rotate(){if(paused||game.busy||game.over)return;pieces[selected].cells=rotateCells(pieces[selected].cells);choices();}
+function move(d){if(!paused&&!game.busy&&!game.over)aim+=d;}
+$('reset').onclick=reset;$('drop').onclick=drop;$('rotate').onclick=rotate;
+$('pause').onclick=()=>{if(game.over)return;paused=!paused;held=0;elapsed=0;$('pause').textContent=paused?'再開':'一時停止';};
+for(const [id,d] of [['left',-1],['right',1]]){
+  $(id).onclick=()=>move(d);
+  $(id).onpointerdown=e=>{held=d;holdTime=-0.2;$(id).setPointerCapture(e.pointerId);};
+  for(const ev of ['pointerup','pointercancel','lostpointercapture'])$(id).addEventListener(ev,()=>held=0);
 }
-function spawnY(){
-  const bounds=structureBounds(Composite.allBodies(world.engine.world));
-  return bounds.minY-130-(preview.bounds.max.y-preview.bounds.min.y)/2;
-}
-function drop(){
-  if(paused||cooldown>0)return;
-  const body=createBlock(pieces[selected],aim,spawnY(),Number($('friction').value));
-  Composite.add(world.engine.world,body);dropped++;cooldown=0.45;
-  pieces[selected]=candidate();refreshPreview();renderChoices();
-  $('status').textContent='次の形を選べます。揺れていても続けて落とせます';
-}
-function rotate(){if(!$('rotation').checked||paused)return;pieces[selected].cells=rotateCells(pieces[selected].cells);refreshPreview();renderChoices();}
-$('drop').onclick=drop;$('reset').onclick=reset;$('rotate').onclick=rotate;
-$('left').onclick=()=>{aim-=CELL/4;pointer=null;};$('right').onclick=()=>{aim+=CELL/4;pointer=null;};
-for(const [id,direction] of [['left',-1],['right',1]]){
-  $(id).addEventListener('pointerdown',e=>{heldButton=direction;pointer=null;$(id).setPointerCapture(e.pointerId);});
-  for(const event of ['pointerup','pointercancel','lostpointercapture'])$(id).addEventListener(event,()=>heldButton=0);
-}
-$('rotation').onchange=()=>{$('rotate').disabled=!$('rotation').checked;};
-$('choice-count').onchange=()=>{pieces=pieces.slice(0,Number($('choice-count').value));while(pieces.length<Number($('choice-count').value))pieces.push(candidate());selected=0;refreshPreview();renderChoices();};
-$('pause').onclick=()=>{paused=!paused;accumulator=0;$('pause').textContent=paused?'再開':'一時停止';$('status').textContent=paused?'一時停止中':'形を選んで、落とす場所を決めよう';};
-for(const id of ['gravity','friction'])$(id).oninput=()=>{
-  $(id+'-value').value=Number($(id).value).toFixed(id==='gravity'?1:2);
-  if(id==='gravity')world.engine.gravity.y=Number($(id).value);
-  else for(const body of Composite.allBodies(world.engine.world))body.friction=Number($(id).value);
-};
-canvas.addEventListener('pointermove',e=>{const r=canvas.getBoundingClientRect();pointer=e.clientX-r.left;aim=camera.x+(pointer-view.w/2)/camera.scale;});
-canvas.addEventListener('pointerdown',e=>{canvas.focus();const r=canvas.getBoundingClientRect();aim=camera.x+(e.clientX-r.left-view.w/2)/camera.scale;pointer=e.clientX-r.left;});
-canvas.addEventListener('pointerleave',()=>pointer=null);
-canvas.addEventListener('pointerup',e=>{if(e.pointerType!=='mouse')pointer=null;});
-window.addEventListener('keydown',e=>{
-  if(['INPUT','SELECT','SUMMARY'].includes(e.target.tagName)||e.target.closest('details'))return;
-  if(['ArrowLeft','ArrowRight','Space','Digit1','Digit2','Digit3','KeyR'].includes(e.code))e.preventDefault();
-  if(e.code==='ArrowLeft'||e.code==='ArrowRight'){heldKeys.add(e.code);pointer=null;}
+function point(e){if(paused||game.busy||game.over)return;const r=canvas.getBoundingClientRect();aim=Math.round((e.clientX-r.left-view.w/2)/unit);}
+canvas.onpointermove=point;canvas.onpointerdown=e=>{canvas.focus();point(e);};
+window.onkeydown=e=>{
+  if(e.target.closest('details'))return;
+  if(['ArrowLeft','ArrowRight','Space','KeyR','Digit1','Digit2','Digit3'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowLeft')move(-1);if(e.code==='ArrowRight')move(1);
   if(e.code==='Space'&&!e.repeat)drop();if(e.code==='KeyR'&&!e.repeat)rotate();
-  const n=Number(e.key)-1;if(n>=0&&n<pieces.length){selected=n;refreshPreview();renderChoices();}
-});
-window.addEventListener('keyup',e=>heldKeys.delete(e.code));
-window.addEventListener('blur',()=>{heldKeys.clear();heldButton=0;pointer=null;});
-new ResizeObserver(()=>{const r=canvas.getBoundingClientRect();view={w:r.width,h:r.height};const dpr=window.devicePixelRatio||1;canvas.width=r.width*dpr;canvas.height=r.height*dpr;}).observe(canvas);
-function drawBody(body,offsetX=0,offsetY=0,alpha=1){
-  ctx.globalAlpha=alpha;
-  for(const part of body.parts.length>1?body.parts.slice(1):body.parts){
-    ctx.beginPath();part.vertices.forEach((v,i)=>i?ctx.lineTo(v.x+offsetX,v.y+offsetY):ctx.moveTo(v.x+offsetX,v.y+offsetY));ctx.closePath();
-    ctx.fillStyle=body.plugin.color;ctx.fill();ctx.strokeStyle='#17252b';ctx.lineWidth=1.3;ctx.stroke();
-  }ctx.globalAlpha=1;
-}
+  const i=Number(e.key)-1;if(i>=0&&i<3&&!game.busy&&!game.over){selected=i;choices();}
+};
+window.onblur=()=>held=0;
+new ResizeObserver(()=>{const r=canvas.getBoundingClientRect();view={w:r.width,h:r.height};const d=devicePixelRatio||1;canvas.width=r.width*d;canvas.height=r.height*d;}).observe(canvas);
+function paint(cells,color,alpha=1){ctx.globalAlpha=alpha;ctx.fillStyle=color;ctx.strokeStyle='#17252b';ctx.lineWidth=1;for(const [x,y] of cells){const sx=view.w/2+(x-0.5)*unit,sy=anchor+(y-0.5)*unit;ctx.fillRect(sx,sy,unit,unit);ctx.strokeRect(sx,sy,unit,unit);}ctx.globalAlpha=1;}
 function frame(now){
-  const dt=Math.min((now-last)/1000,0.05);last=now;
-  if(!paused){
-    accumulator+=dt*PLAY_SPEED;cooldown=Math.max(0,cooldown-dt);
-    while(accumulator>=1/120){Engine.update(world.engine,1000/120);accumulator-=1/120;}
-    for(const b of Composite.allBodies(world.engine.world))if(!b.isStatic&&b.bounds.min.y>1000){Composite.remove(world.engine.world,b);lost++;}
-    const direction=heldButton+Number(heldKeys.has('ArrowRight'))-Number(heldKeys.has('ArrowLeft'));
-    aim+=direction*dt*220/camera.scale;
-  }
-  const bodies=Composite.allBodies(world.engine.world), bounds=structureBounds(bodies), sy=spawnY();
-  const top=sy+preview.bounds.min.y-35;
-  const target=cameraFor(view,bounds,top);
-  const t=1-Math.exp(-dt*5);
-  // Expand immediately so the next launch preview never clips above the screen.
-  // Ease back in only after the falling body has settled or left the structure.
-  camera.scale=target.scale<camera.scale?target.scale:camera.scale+(target.scale-camera.scale)*t;
-  camera.x=0;
-  camera.y=(view.h/2-(view.h-70))/camera.scale;
-  if(pointer!==null)aim=(pointer-view.w/2)/camera.scale;
-  aim=clampAim(aim,view.w,camera.scale,preview);
-  const dpr=window.devicePixelRatio||1;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,view.w,view.h);
-  ctx.translate(view.w/2,view.h/2);ctx.scale(camera.scale,camera.scale);ctx.translate(-camera.x,-camera.y);
-  const left=camera.x-view.w/(2*camera.scale), right=camera.x+view.w/(2*camera.scale);
-  ctx.strokeStyle='#30434e';ctx.lineWidth=1/camera.scale;ctx.setLineDash([4,8]);ctx.beginPath();ctx.moveTo(left,20);ctx.lineTo(right,20);ctx.stroke();ctx.setLineDash([]);
-  for(const b of bodies)drawBody(b,0,0,b.position.y>100?Math.max(0,1-(b.position.y-100)/900):1);
-  // The outlined body is the launch position only. No landing prediction.
-  drawBody(preview,aim,sy,paused?0.3:0.65);
-  ctx.fillStyle='#a8b9c1';ctx.font=`${11/camera.scale}px sans-serif`;ctx.textAlign='center';ctx.fillText('落下開始位置',aim,sy+preview.bounds.min.y-14/camera.scale);
-  $('height').textContent=Math.max(0,(-20-bounds.minY)/CELL).toFixed(1);$('width').textContent=((bounds.maxX-bounds.minX)/CELL).toFixed(1);
-  $('drops').textContent=dropped;$('lost').textContent=lost;$('drop').disabled=paused||cooldown>0;
+  const dt=Math.min(0.05,(now-last)/1000);last=now;
+  if(!paused&&!game.over){elapsed+=dt;if(elapsed>=FALL_INTERVAL){elapsed-=FALL_INTERVAL;const busy=game.busy;step(game);if(busy!==game.busy)choices();}if(held){holdTime+=dt;if(holdTime>=0.12){move(held);holdTime=0;}}}
+  const all=game.blocks.flatMap(cellsOf),p=pieces[selected],top=Math.min(0,...all.map(c=>c[1]));
+  const ph=Math.max(...p.cells.map(c=>c[1]))+1,pw=Math.max(...p.cells.map(c=>c[0]))+1,sy=top-ph-3;
+  anchor=view.h-70;
+  unit=Math.min(40,(anchor-45)/Math.max(8,-sy+1),view.w/(2*(Math.max(5,...all.map(c=>Math.abs(c[0])))+2)));
+  const half=Math.floor(view.w/(2*unit)-0.5);aim=Math.max(-half,Math.min(half-pw+1,aim));
+  ctx.setTransform(devicePixelRatio||1,0,0,devicePixelRatio||1,0,0);ctx.clearRect(0,0,view.w,view.h);
+  ctx.strokeStyle='#273b48';ctx.lineWidth=0.5;
+  for(let x=-half-1;x<=half+1;x++){ctx.beginPath();ctx.moveTo(view.w/2+(x-0.5)*unit,0);ctx.lineTo(view.w/2+(x-0.5)*unit,view.h);ctx.stroke();}
+  for(let y=Math.floor(-anchor/unit);y<=LOSS_ROW;y++){ctx.beginPath();ctx.moveTo(0,anchor+(y-0.5)*unit);ctx.lineTo(view.w,anchor+(y-0.5)*unit);ctx.stroke();}
+  for(const b of game.blocks)paint(cellsOf(b),b.color);
+  if(!game.busy&&!game.over){paint(p.cells.map(([x,y])=>[x+aim,y+sy]),p.color,0.65);ctx.fillStyle='#a8b9c1';ctx.font='11px sans-serif';ctx.textAlign='center';ctx.fillText('落下開始位置',view.w/2+(aim+(pw-1)/2)*unit,anchor+(sy-1)*unit);}
+  if(game.flash.length)paint(game.flash,'#fff',0.7);
+  $('score').textContent=game.score.toLocaleString();$('combo').textContent=game.combo;$('best').textContent=game.best;$('drops').textContent=game.drops;
+  $('drop').disabled=paused||game.busy||game.over;$('rotate').disabled=paused||game.busy||game.over;
+  $('status').textContent=game.over?'ゲームオーバー — 下に落ちました。「はじめから」で再挑戦':paused?'一時停止中':game.busy?(game.combo?`${game.combo}連鎖！ ×${2**Math.min(game.combo-1,20)} — 解決中`:'落下中…'):game.combo?`${game.combo}連鎖！ 次の形を選んでください`:'形を選んで、1マスずつ位置を決めよう';
+  if(game.over){ctx.fillStyle='#10181fcc';ctx.fillRect(0,view.h/2-55,view.w,110);ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font='bold 26px sans-serif';ctx.fillText('GAME OVER',view.w/2,view.h/2-8);ctx.font='16px sans-serif';ctx.fillText(`${game.score.toLocaleString()} 点 ／ 最大 ${game.best} 連鎖`,view.w/2,view.h/2+25);}
   requestAnimationFrame(frame);
 }
 reset();requestAnimationFrame(frame);

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/physics.test.js tests/view.test.js",
+    "test": "node --test tests/grid.test.js",
     "dev": "node scripts/prepare-page.mjs && vite --host 127.0.0.1",
     "build": "node scripts/prepare-page.mjs && vite build --base=./ && node scripts/publish-build.mjs",
     "preview": "vite preview --host 127.0.0.1",
