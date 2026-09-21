@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test tests/physics.test.js",
-    "dev": "vite --host 127.0.0.1",
-    "build": "vite build --base=./",
+    "dev": "node scripts/prepare-page.mjs && vite --host 127.0.0.1",
+    "build": "node scripts/prepare-page.mjs && vite build --base=./ --outDir . --emptyOutDir false",
     "preview": "vite preview --host 127.0.0.1",
     "test:e2e": "playwright test"
   },
