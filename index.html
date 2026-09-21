@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ブロックバランス — 試作版</title></head><body>
+<main>
+<header><div><small>PHYSICS PLAYGROUND / 01</small><h1>ブロックバランス</h1></div><button id="reset">はじめから</button></header>
+<section class="stats" aria-label="プレイ記録"><span>高さ <b id="height">0.0</b> マス</span><span>幅 <b id="width">1.0</b> マス</span><span>落とした数 <b id="drops">0</b></span><span>落下ロスト <b id="lost">0</b></span></section>
+<div class="stage"><canvas id="game" aria-label="ブロックを落とすエリア。左右キーで位置を調整し、スペースで落下。" tabindex="0"></canvas><div class="stage-note">小さな土台から、どこまで広がる？</div><div id="status" role="status">形を選んで、落とす場所を決めよう</div></div>
+<section class="controls"><div class="choice-heading"><strong>次のブロック</strong><span>1・2・3 キーで選択</span></div><div id="choices"></div><div class="actions"><button id="left" aria-label="左へ">←</button><button id="drop" class="primary">落とす <kbd>Space</kbd></button><button id="right" aria-label="右へ">→</button><button id="rotate" disabled>回転 <kbd>R</kbd></button><button id="pause">一時停止</button></div></section>
+<details><summary>試遊設定・操作方法</summary><div class="settings"><label><input id="rotation" type="checkbox"> 落下前の回転を許可する</label><label>候補数 <select id="choice-count"><option value="3">3個から選択</option><option value="1">1個（ランダム）</option></select></label><label>重力 <input id="gravity" type="range" min="0.3" max="1.8" step="0.1" value="1"><output id="gravity-value">1.0</output></label><label>摩擦 <input id="friction" type="range" min="0" max="1" step="0.05" value="0.65"><output id="friction-value">0.65</output></label></div><p>マウス・タッチで横位置を指定 →「落とす」。キーボードは ← → / Space / 1〜3 / R。画面の左右端にポインターを置くと横へ移動できます。構造物に合わせて表示範囲が広がります。</p><p>色は見分けるための表示のみ。接着・消去・スコア・ゲームオーバーは未実装です。土台は固定、落ちたブロックはロストとして数え、そのまま続けられます。</p></details>
+<footer>まずは、積むことそのものを楽しむ試作版。</footer>
+</main><script type="module" src="/src/main.js"></script></body></html>
